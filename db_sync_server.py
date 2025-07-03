@@ -2,18 +2,34 @@ import socket
 import json
 import psycopg2
 from psycopg2 import Error
+import os
+import logging
+from typing import Optional
 
-def start_tcp_server(host="localhost", port=443):
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler("db_sync_server.log"),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
+
+def start_tcp_server(host: str = "localhost", port: int = 443) -> Optional[socket.socket]:
     """
     Create and start a TCP listening socket on the specified host and port.
     
     Parameters:
-    - host (str): The host address to bind the server to (default: localhost).
-    - port (int): The port number to listen on (default: 443).
+    - host (str): The host address to bind the server to. Defaults to env var SERVER_HOST or "localhost".
+    - port (int): The port number to listen on. Defaults to env var SERVER_PORT or 443.
     
     Returns:
     - server_socket: The socket object if successful, None otherwise.
     """
+    host = host if host != "localhost" else os.getenv("SERVER_HOST", "localhost")
+    port = port if port != 443 else int(os.getenv("SERVER_PORT", 443))
     try:
         # Create a TCP/IP socket
         server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -26,43 +42,43 @@ def start_tcp_server(host="localhost", port=443):
         
         # Listen for incoming connections (max 5 queued connections)
         server_socket.listen(5)
-        print(f"TCP server started on {host}:{port}, waiting for connections...")
+        logger.info(f"TCP server started on {host}:{port}, waiting for connections...")
         
         return server_socket
     except Exception as e:
-        print(f"Error starting TCP server on {host}:{port}: {e}")
+        logger.error(f"Error starting TCP server on {host}:{port}: {e}")
         return None
 
-def connect_to_postgres(dbname, user, password, host="localhost", port="5432"):
+def connect_to_postgres(dbname: str = None, user: str = None, password: str = None, host: str = "localhost", port: str = "5432") -> Optional[psycopg2.extensions.connection]:
     """
-    Establish a connection to a PostgreSQL database.
+    Establish a connection to a PostgreSQL database using environment variables as defaults.
     
     Parameters:
-    - dbname (str): The name of the database to connect to.
-    - user (str): The username for the database.
-    - password (str): The password for the database.
-    - host (str): The host address of the database server (default: localhost).
-    - port (str): The port number of the database server (default: 5432).
+    - dbname (str): The name of the database to connect to. Defaults to env var DB_NAME.
+    - user (str): The username for the database. Defaults to env var DB_USER.
+    - password (str): The password for the database. Defaults to env var DB_PASSWORD.
+    - host (str): The host address of the database server. Defaults to env var DB_HOST or "localhost".
+    - port (str): The port number of the database server. Defaults to env var DB_PORT or "5432".
     
     Returns:
-    - connection: A connection object to the PostgreSQL database.
+    - connection: A connection object to the PostgreSQL database, or None if connection fails.
     """
     connection = None
     try:
         connection = psycopg2.connect(
-            dbname=dbname,
-            user=user,
-            password=password,
-            host=host,
-            port=port
+            dbname=dbname or os.getenv("DB_NAME"),
+            user=user or os.getenv("DB_USER"),
+            password=password or os.getenv("DB_PASSWORD"),
+            host=host if host != "localhost" else os.getenv("DB_HOST", "localhost"),
+            port=port if port != "5432" else os.getenv("DB_PORT", "5432")
         )
-        print("Successfully connected to the PostgreSQL database.")
+        logger.info("Successfully connected to the PostgreSQL database.")
         return connection
     except Error as e:
-        print(f"Error connecting to PostgreSQL database: {e}")
+        logger.error(f"Error connecting to PostgreSQL database: {e}")
         return None
 
-def insert_row(connection, table_name, row_data):
+def insert_row(connection: psycopg2.extensions.connection, table_name: str, row_data: dict) -> bool:
     """
     Insert a row of data into a specified table in the PostgreSQL database.
     
@@ -74,6 +90,7 @@ def insert_row(connection, table_name, row_data):
     Returns:
     - bool: True if the insertion was successful, False otherwise.
     """
+    cursor = None
     try:
         cursor = connection.cursor()
         columns = ', '.join(row_data.keys())
@@ -82,17 +99,17 @@ def insert_row(connection, table_name, row_data):
         query = f"INSERT INTO {table_name} ({columns}) VALUES ({placeholders});"
         cursor.execute(query, values)
         connection.commit()
-        print(f"Successfully inserted row into table {table_name}.")
+        logger.info(f"Successfully inserted row into table {table_name}.")
         return True
     except Error as e:
-        print(f"Error inserting row into table {table_name}: {e}")
+        logger.error(f"Error inserting row into table {table_name}: {e}")
         connection.rollback()
         return False
     finally:
         if cursor:
             cursor.close()
 
-def handle_client_data(client_socket, client_address, db_connection, table_name):
+def handle_client_data(client_socket: socket.socket, client_address: tuple, db_connection: psycopg2.extensions.connection, table_name: str) -> bool:
     """
     Receive data from a client over the TCP socket and insert it into the database.
     Handles data larger than buffer size by accumulating chunks until complete.
@@ -107,12 +124,12 @@ def handle_client_data(client_socket, client_address, db_connection, table_name)
     - bool: True if data was received and processed, False if the connection was closed or an error occurred.
     """
     try:
-        buffer_size = 4096
+        buffer_size = int(os.getenv("BUFFER_SIZE", 4096))
         full_data = b""
         while True:
             chunk = client_socket.recv(buffer_size)
             if not chunk:
-                print(f"Client {client_address} disconnected.")
+                logger.info(f"Client {client_address} disconnected.")
                 return False
             full_data += chunk
             try:
@@ -120,7 +137,7 @@ def handle_client_data(client_socket, client_address, db_connection, table_name)
                 decoded_data = full_data.decode('utf-8')
                 json.loads(decoded_data)
                 # If JSON parsing succeeds, process the data
-                print(f"Received complete data from {client_address}: {decoded_data[:100]}... (total {len(decoded_data)} characters)")
+                logger.info(f"Received complete data from {client_address}: {decoded_data[:100]}... (total {len(decoded_data)} characters)")
                 rows = json.loads(decoded_data)
                 # Insert each row into the database
                 for row in rows:
@@ -140,19 +157,13 @@ def handle_client_data(client_socket, client_address, db_connection, table_name)
                 # Incomplete UTF-8 sequence, continue receiving
                 continue
     except Exception as e:
-        print(f"Error receiving data from {client_address}: {e}")
+        logger.error(f"Error receiving data from {client_address}: {e}")
         return False
 
 # Example usage
 if __name__ == "__main__":
-    # Connect to the PostgreSQL database on Host B (replace with actual credentials)
-    db_conn = connect_to_postgres(
-        dbname="your_database_name",
-        user="your_username",
-        password="your_password",
-        host="localhost",  # Adjust if database is on a different host
-        port="5432"
-    )
+    # Connect to the PostgreSQL database on Host B using environment variables or defaults
+    db_conn = connect_to_postgres(host=os.getenv("TARGET_DB_HOST", "localhost"))
     
     if db_conn:
         server = start_tcp_server()
@@ -161,20 +172,21 @@ if __name__ == "__main__":
                 while True:
                     # Wait for a connection
                     client_socket, client_address = server.accept()
-                    print(f"Connection established with {client_address}")
+                    logger.info(f"Connection established with {client_address}")
                     # Handle client data
-                    while handle_client_data(client_socket, client_address, db_conn, "your_table_name"):
+                    table_name = os.getenv("TABLE_NAME", "your_table_name")
+                    while handle_client_data(client_socket, client_address, db_conn, table_name):
                         pass  # Continue receiving data until connection closes or error occurs
                     client_socket.close()
             except KeyboardInterrupt:
-                print("\nShutting down TCP server...")
+                logger.info("\nShutting down TCP server...")
                 server.close()
                 db_conn.close()
-                print("Database connection closed.")
+                logger.info("Database connection closed.")
             except Exception as e:
-                print(f"Server error: {e}")
+                logger.error(f"Server error: {e}")
                 server.close()
                 db_conn.close()
-                print("Database connection closed.")
+                logger.info("Database connection closed.")
     else:
-        print("Failed to connect to the database on Host B.")
+        logger.error("Failed to connect to the database on Host B.")

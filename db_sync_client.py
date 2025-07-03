@@ -2,60 +2,76 @@ import socket
 import json
 import psycopg2
 from psycopg2 import Error
+import os
+import logging
+from typing import Optional
 
-def connect_to_tcp_server(host="localhost", port=443):
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler("db_sync_client.log"),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
+
+def connect_to_tcp_server(host: str = "localhost", port: int = 443) -> Optional[socket.socket]:
     """
     Connect to a listening TCP socket on the specified host and port.
     
     Parameters:
-    - host (str): The host address of the server to connect to (default: localhost).
-    - port (int): The port number of the server to connect to (default: 443).
+    - host (str): The host address of the server to connect to. Defaults to env var SERVER_HOST or "localhost".
+    - port (int): The port number of the server to connect to. Defaults to env var SERVER_PORT or 443.
     
     Returns:
     - client_socket: The socket object if connection is successful, None otherwise.
     """
+    host = host if host != "localhost" else os.getenv("SERVER_HOST", "localhost")
+    port = port if port != 443 else int(os.getenv("SERVER_PORT", 443))
     try:
         # Create a TCP/IP socket
         client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         
         # Connect to the server
         client_socket.connect((host, port))
-        print(f"Successfully connected to TCP server at {host}:{port}")
+        logger.info(f"Successfully connected to TCP server at {host}:{port}")
         return client_socket
     except Exception as e:
-        print(f"Error connecting to TCP server at {host}:{port}: {e}")
+        logger.error(f"Error connecting to TCP server at {host}:{port}: {e}")
         return None
 
-def connect_to_postgres(dbname, user, password, host="localhost", port="5432"):
+def connect_to_postgres(dbname: str = None, user: str = None, password: str = None, host: str = "localhost", port: str = "5432") -> Optional[psycopg2.extensions.connection]:
     """
-    Establish a connection to a PostgreSQL database.
+    Establish a connection to a PostgreSQL database using environment variables as defaults.
     
     Parameters:
-    - dbname (str): The name of the database to connect to.
-    - user (str): The username for the database.
-    - password (str): The password for the database.
-    - host (str): The host address of the database server (default: localhost).
-    - port (str): The port number of the database server (default: 5432).
+    - dbname (str): The name of the database to connect to. Defaults to env var DB_NAME.
+    - user (str): The username for the database. Defaults to env var DB_USER.
+    - password (str): The password for the database. Defaults to env var DB_PASSWORD.
+    - host (str): The host address of the database server. Defaults to env var DB_HOST or "localhost".
+    - port (str): The port number of the database server. Defaults to env var DB_PORT or "5432".
     
     Returns:
-    - connection: A connection object to the PostgreSQL database.
+    - connection: A connection object to the PostgreSQL database, or None if connection fails.
     """
     connection = None
     try:
         connection = psycopg2.connect(
-            dbname=dbname,
-            user=user,
-            password=password,
-            host=host,
-            port=port
+            dbname=dbname or os.getenv("DB_NAME"),
+            user=user or os.getenv("DB_USER"),
+            password=password or os.getenv("DB_PASSWORD"),
+            host=host if host != "localhost" else os.getenv("DB_HOST", "localhost"),
+            port=port if port != "5432" else os.getenv("DB_PORT", "5432")
         )
-        print("Successfully connected to the PostgreSQL database.")
+        logger.info("Successfully connected to the PostgreSQL database.")
         return connection
     except Error as e:
-        print(f"Error connecting to PostgreSQL database: {e}")
+        logger.error(f"Error connecting to PostgreSQL database: {e}")
         return None
 
-def query_table(connection, table_name):
+def query_table(connection: psycopg2.extensions.connection, table_name: str) -> list:
     """
     Query all information from a specified table in the PostgreSQL database.
     
@@ -66,21 +82,22 @@ def query_table(connection, table_name):
     Returns:
     - list: A list of tuples containing the rows of data from the table.
     """
+    cursor = None
     try:
         cursor = connection.cursor()
         query = f"SELECT * FROM {table_name};"
         cursor.execute(query)
         rows = cursor.fetchall()
-        print(f"Successfully retrieved data from table {table_name}.")
+        logger.info(f"Successfully retrieved {len(rows)} rows from table {table_name}.")
         return rows
     except Error as e:
-        print(f"Error querying table {table_name}: {e}")
+        logger.error(f"Error querying table {table_name}: {e}")
         return []
     finally:
         if cursor:
             cursor.close()
 
-def send_data_over_socket(client_socket, data):
+def send_data_over_socket(client_socket: socket.socket, data: list) -> bool:
     """
     Send data over the socket connection as a JSON string.
     Ensures all data is sent even if it exceeds buffer size.
@@ -101,42 +118,43 @@ def send_data_over_socket(client_socket, data):
             if sent == 0:
                 raise RuntimeError("Socket connection broken")
             total_sent += sent
-        print(f"Sent data over socket: {message[:100]}... (total {len(message)} characters)")
+        logger.info(f"Sent data over socket: {message[:100]}... (total {len(message)} characters)")
         return True
     except Exception as e:
-        print(f"Error sending data over socket: {e}")
+        logger.error(f"Error sending data over socket: {e}")
         return False
 
 # Example usage
 if __name__ == "__main__":
-    # Connect to the PostgreSQL database on Host A (replace with actual credentials)
-    db_conn = connect_to_postgres(
-        dbname="your_database_name",
-        user="your_username",
-        password="your_password",
-        host="host_a_ip_address",  # Replace with Host A's IP address
-        port="5432"
-    )
+    # Connect to the PostgreSQL database on Host A using environment variables or defaults
+    db_conn = connect_to_postgres(host=os.getenv("SOURCE_DB_HOST", "host_a_ip_address"))
     
     if db_conn:
-        # Query data from the table
-        table_data = query_table(db_conn, "your_table_name")
-        db_conn.close()
-        print("Database connection closed.")
-        
-        # Connect to the TCP server on Host B
-        client = connect_to_tcp_server(host="host_b_ip_address")  # Replace with Host B's IP address
-        if client:
-            try:
-                # Send the queried data over the socket
-                if send_data_over_socket(client, table_data):
-                    print("Data sent successfully.")
-                else:
-                    print("Failed to send data.")
-                client.close()
-                print("Socket connection closed.")
-            except Exception as e:
-                print(f"Client error: {e}")
-                client.close()
+        try:
+            # Query data from the table
+            table_name = os.getenv("TABLE_NAME", "your_table_name")
+            table_data = query_table(db_conn, table_name)
+            db_conn.close()
+            logger.info("Database connection closed.")
+            
+            # Connect to the TCP server on Host B using environment variables or defaults
+            client = connect_to_tcp_server(host=os.getenv("TARGET_SERVER_HOST", "host_b_ip_address"))
+            if client:
+                try:
+                    # Send the queried data over the socket
+                    if send_data_over_socket(client, table_data):
+                        logger.info("Data sent successfully.")
+                    else:
+                        logger.warning("Failed to send data.")
+                    client.close()
+                    logger.info("Socket connection closed.")
+                except Exception as e:
+                    logger.error(f"Client error: {e}")
+                    client.close()
+        except Exception as e:
+            logger.error(f"Database operation error: {e}")
+            if db_conn:
+                db_conn.close()
+                logger.info("Database connection closed.")
     else:
-        print("Failed to connect to the database on Host A.")
+        logger.error("Failed to connect to the database on Host A.")
