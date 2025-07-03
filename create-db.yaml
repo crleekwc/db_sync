@@ -1,0 +1,38 @@
+---
+- name: Setup PostgreSQL Server and Database on Red Hat Linux
+  hosts: localhost
+  become: yes
+  tasks:
+    - name: Install PostgreSQL Server
+      yum:
+        name: postgresql-server
+        state: present
+        update_cache: yes
+      when: ansible_os_family == "RedHat"
+
+    - name: Initialize PostgreSQL database (if not already initialized)
+      command: postgresql-setup initdb
+      args:
+        creates: /var/lib/pgsql/data/postgresql.conf
+      when: ansible_os_family == "RedHat"
+
+    - name: Ensure PostgreSQL service is started and enabled
+      service:
+        name: postgresql
+        state: started
+        enabled: yes
+
+    - name: Create database testdb
+      postgresql_db:
+        name: testdb
+        state: present
+      become_user: postgres
+
+    - name: Create user test with password test
+      postgresql_user:
+        name: test
+        password: test
+        db: testdb
+        state: present
+        priv: ALL
+      become_user: postgres
