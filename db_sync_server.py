@@ -1,6 +1,6 @@
 import socket
 
-def start_tcp_server(host="localhost", port=443):
+def start_tcp_server(host="0.0.0.0", port=443):
     """
     Create and start a TCP listening socket on the specified host and port.
     
