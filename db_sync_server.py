@@ -109,10 +109,56 @@ def insert_row(connection: psycopg2.extensions.connection, table_name: str, row_
         if cursor:
             cursor.close()
 
+def apply_schema(connection: psycopg2.extensions.connection, table_name: str, schema: list) -> bool:
+    """
+    Apply the provided schema to the specified table in the PostgreSQL database.
+    Creates the table if it doesn't exist, or alters it to match the schema.
+    
+    Parameters:
+    - connection: A connection object to the PostgreSQL database.
+    - table_name (str): The name of the table to apply the schema to.
+    - schema (list): A list of dictionaries defining column names and types.
+    
+    Returns:
+    - bool: True if the schema was applied successfully, False otherwise.
+    """
+    cursor = None
+    try:
+        cursor = connection.cursor()
+        # Check if table exists
+        cursor.execute("""
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables 
+                WHERE table_name = %s
+            );
+        """, (table_name,))
+        table_exists = cursor.fetchone()[0]
+        
+        if not table_exists:
+            # Create table if it doesn't exist
+            columns_def = ', '.join([f"{col['name']} {col['type']}" for col in schema])
+            create_query = f"CREATE TABLE {table_name} ({columns_def});"
+            cursor.execute(create_query)
+            logger.info(f"Created table {table_name} with schema {schema}.")
+        else:
+            # Check existing columns and alter if necessary (simplified for now)
+            logger.info(f"Table {table_name} already exists. Skipping schema alteration for simplicity.")
+        
+        connection.commit()
+        return True
+    except Error as e:
+        logger.error(f"Error applying schema to table {table_name}: {e}")
+        connection.rollback()
+        return False
+    finally:
+        if cursor:
+            cursor.close()
+
 def handle_client_data(client_socket: socket.socket, client_address: tuple, db_connection: psycopg2.extensions.connection, table_name: str) -> bool:
     """
     Receive data from a client over the TCP socket and insert it into the database.
     Handles data larger than buffer size by accumulating chunks until complete.
+    Expects a payload with schema and data.
     
     Parameters:
     - client_socket: The socket object for the client connection.
@@ -138,16 +184,39 @@ def handle_client_data(client_socket: socket.socket, client_address: tuple, db_c
                 json.loads(decoded_data)
                 # If JSON parsing succeeds, process the data
                 logger.info(f"Received complete data from {client_address}: {decoded_data[:100]}... (total {len(decoded_data)} characters)")
-                rows = json.loads(decoded_data)
+                payload = json.loads(decoded_data)
+                
+                # Check if payload contains schema and data
+                if isinstance(payload, dict) and 'schema' in payload and 'data' in payload:
+                    schema = payload['schema']
+                    rows = payload['data']
+                    # Apply schema before inserting data
+                    if apply_schema(db_connection, table_name, schema):
+                        logger.info(f"Schema applied successfully for table {table_name}.")
+                    else:
+                        logger.error(f"Failed to apply schema for table {table_name}.")
+                        return False
+                else:
+                    # Fallback to old behavior if payload is just a list of rows
+                    rows = payload
+                
                 # Insert each row into the database
                 for row in rows:
-                    # Assuming row is a list/tuple, convert to dict with assumed column names
-                    # Adjust column names based on your table structure
-                    row_dict = {
-                        "column1": row[0] if len(row) > 0 else None,
-                        "column2": row[1] if len(row) > 1 else None,
-                        # Add more columns as needed based on table structure
-                    }
+                    if isinstance(row, dict):
+                        row_dict = row
+                    else:
+                        # Assuming row is a list/tuple, convert to dict based on schema if available
+                        row_dict = {}
+                        if 'schema' in locals():
+                            for i, col in enumerate(schema):
+                                if i < len(row):
+                                    row_dict[col['name']] = row[i]
+                        else:
+                            # Fallback to dummy column names
+                            row_dict = {
+                                "column1": row[0] if len(row) > 0 else None,
+                                "column2": row[1] if len(row) > 1 else None,
+                            }
                     insert_row(db_connection, table_name, row_dict)
                 return True
             except json.JSONDecodeError:

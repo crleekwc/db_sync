@@ -71,28 +71,62 @@ def connect_to_postgres(dbname: str = None, user: str = None, password: str = No
         logger.error(f"Error connecting to PostgreSQL database: {e}")
         return None
 
-def query_table(connection: psycopg2.extensions.connection, table_name: str) -> list:
+def query_table_schema(connection: psycopg2.extensions.connection, table_name: str) -> list:
     """
-    Query all information from a specified table in the PostgreSQL database.
+    Query the schema of a specified table in the PostgreSQL database.
+    
+    Parameters:
+    - connection: A connection object to the PostgreSQL database.
+    - table_name (str): The name of the table to query schema for.
+    
+    Returns:
+    - list: A list of dictionaries defining column names and types.
+    """
+    cursor = None
+    try:
+        cursor = connection.cursor()
+        query = """
+            SELECT column_name, data_type 
+            FROM information_schema.columns 
+            WHERE table_name = %s;
+        """
+        cursor.execute(query, (table_name,))
+        columns = cursor.fetchall()
+        schema = [{'name': col[0], 'type': col[1].upper()} for col in columns]
+        logger.info(f"Successfully retrieved schema for table {table_name}: {schema}")
+        return schema
+    except Error as e:
+        logger.error(f"Error querying schema for table {table_name}: {e}")
+        return []
+    finally:
+        if cursor:
+            cursor.close()
+
+def query_table(connection: psycopg2.extensions.connection, table_name: str) -> dict:
+    """
+    Query all information and schema from a specified table in the PostgreSQL database.
     
     Parameters:
     - connection: A connection object to the PostgreSQL database.
     - table_name (str): The name of the table to query.
     
     Returns:
-    - list: A list of tuples containing the rows of data from the table.
+    - dict: A dictionary containing the schema and data rows from the table.
     """
     cursor = None
     try:
         cursor = connection.cursor()
+        # Query data
         query = f"SELECT * FROM {table_name};"
         cursor.execute(query)
         rows = cursor.fetchall()
         logger.info(f"Successfully retrieved {len(rows)} rows from table {table_name}.")
-        return rows
+        # Query schema
+        schema = query_table_schema(connection, table_name)
+        return {'schema': schema, 'data': rows}
     except Error as e:
         logger.error(f"Error querying table {table_name}: {e}")
-        return []
+        return {'schema': [], 'data': []}
     finally:
         if cursor:
             cursor.close()
@@ -131,9 +165,9 @@ if __name__ == "__main__":
     
     if db_conn:
         try:
-            # Query data from the table
+            # Query data and schema from the table
             table_name = os.getenv("TABLE_NAME", "your_table_name")
-            table_data = query_table(db_conn, table_name)
+            table_payload = query_table(db_conn, table_name)
             db_conn.close()
             logger.info("Database connection closed.")
             
@@ -141,8 +175,8 @@ if __name__ == "__main__":
             client = connect_to_tcp_server(host=os.getenv("TARGET_SERVER_HOST", "host_b_ip_address"))
             if client:
                 try:
-                    # Send the queried data over the socket
-                    if send_data_over_socket(client, table_data):
+                    # Send the queried data and schema over the socket
+                    if send_data_over_socket(client, table_payload):
                         logger.info("Data sent successfully.")
                     else:
                         logger.warning("Failed to send data.")
