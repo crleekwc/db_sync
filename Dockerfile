@@ -56,7 +56,7 @@ EXPOSE 443
 
 # Command to run either client or server based on RUN_MODE environment variable
 CMD if [ "$RUN_MODE" = "client" ]; then \
-        python3 db_sync/db_sync_client.py; \
+        python3.12 db_sync_client.py; \
     else \
-        python3 db_sync/db_sync_server.py; \
+        python3.12 db_sync_server.py; \
     fi

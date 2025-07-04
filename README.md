@@ -105,6 +105,82 @@ Use the provided Ansible playbook to set up a PostgreSQL server and database on 
 ansible-playbook create-db.yaml
 ```
 
+## Building the Docker Container Image
+
+To build a Docker container image for the DB Sync project, use the provided `Dockerfile`. This image can be used to deploy either the server or the client components.
+
+1. **Navigate to the Project Directory**:
+   Ensure you are in the root directory of the project where the `Dockerfile` is located.
+
+2. **Build the Image**:
+   Run the following command to build the Docker image. Replace `db-sync-image` with any name you prefer for the image.
+   ```bash
+   docker build -t db-sync-image .
+   ```
+
+3. **Verify the Image**:
+   After the build process completes, you can verify that the image was created successfully by listing your Docker images:
+   ```bash
+   docker images
+   ```
+
+## Deploying with Docker
+
+You can deploy the DB Sync server or client using the Docker image you built. Below are example commands for deploying both components, including how to set up volume mounts for certificates and pickle files.
+
+### Deploying the Server
+
+To deploy the server component, which listens for incoming data and inserts it into the target database, use the following command:
+
+```bash
+docker run -d \
+  --name db-sync-server \
+  -e TARGET_DB_NAME="your_target_db_name" \
+  -e TARGET_DB_USER="your_target_db_user" \
+  -e TARGET_DB_PASSWORD="your_target_db_password" \
+  -e TARGET_DB_HOST="your_target_db_host" \
+  -e TARGET_DB_PORT="5432" \
+  -e SERVER_HOST="0.0.0.0" \
+  -e SERVER_PORT="443" \
+  -e SERVER_CERT_FILE="/certs/server.crt" \
+  -e SERVER_KEY_FILE="/certs/server.key" \
+  -v /path/to/certificates:/certs:ro \
+  -v /path/to/server_data:/data \
+  db-sync-image \
+  python db_sync_server.py
+```
+
+- **Environment Variables**: Set the target database credentials and server settings as environment variables.
+- **Volume Mount for Certificates**: The `-v /path/to/certificates:/certs:ro` option mounts a directory containing the server certificate and key files (`server.crt` and `server.key`) into the container at `/certs` in read-only mode.
+- **Volume Mount for Pickle File**: The `-v /path/to/server_data:/data` option mounts a directory to store the pickle file for persistent tracking between script executions.
+
+### Deploying the Client
+
+To deploy the client component, which connects to the source database and sends data to the server, use the following command:
+
+```bash
+docker run -d \
+  --name db-sync-client \
+  -e SOURCE_DB_NAME="your_source_db_name" \
+  -e SOURCE_DB_USER="your_source_db_user" \
+  -e SOURCE_DB_PASSWORD="your_source_db_password" \
+  -e SOURCE_DB_HOST="your_source_db_host" \
+  -e SOURCE_DB_PORT="5432" \
+  -e TARGET_SERVER_HOST="your_target_server_host" \
+  -e SERVER_PORT="443" \
+  -e BUFFER_SIZE="4096" \
+  -e SYNC_INTERVAL_SECONDS="60" \
+  -e TABLE_NAME="your_table_name" \
+  -v /path/to/client_data:/data \
+  db-sync-image \
+  python db_sync_client.py
+```
+
+- **Environment Variables**: Set the source database credentials and server connection details as environment variables.
+- **Volume Mount for Pickle File**: The `-v /path/to/client_data:/data` option mounts a directory to store the pickle file for persistent tracking of synchronized data.
+
+**Note**: Replace `/path/to/certificates`, `/path/to/server_data`, and `/path/to/client_data` with the actual paths on your host machine where you want to store the certificates and data files. Ensure that the paths inside the container (`/certs` and `/data`) match the expected paths in your environment variable configurations if they differ from the defaults.
+
 ## Offline Deployment for Disconnected Environments
 
 To deploy this project in a disconnected environment without internet access:
