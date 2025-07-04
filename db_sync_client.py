@@ -192,14 +192,20 @@ if __name__ == "__main__":
     # File to store the last sent ID for persistence
     LAST_SENT_ID_FILE = "last_sent_id.pkl"
     
-    def load_last_sent_id():
-        """Load the last sent ID from a file if it exists."""
-        try:
-            if os.path.exists(LAST_SENT_ID_FILE):
-                with open(LAST_SENT_ID_FILE, 'rb') as f:
-                    return pickle.load(f)
-        except Exception as e:
-            logger.error(f"Error loading last sent ID: {e}")
+def load_last_sent_id():
+    """Load the last sent ID from a file if it exists, initialize a new file if it doesn't."""
+    try:
+        if os.path.exists(LAST_SENT_ID_FILE):
+            with open(LAST_SENT_ID_FILE, 'rb') as f:
+                return pickle.load(f)
+        else:
+            # Initialize a new pickle file with ID 0 if it doesn't exist
+            with open(LAST_SENT_ID_FILE, 'wb') as f:
+                pickle.dump(0, f)
+            logger.info(f"Initialized new last sent ID file: {LAST_SENT_ID_FILE}")
+            return 0
+    except Exception as e:
+        logger.error(f"Error loading last sent ID: {e}")
         return 0
     
     def save_last_sent_id(last_sent_id):
