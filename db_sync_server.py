@@ -5,6 +5,10 @@ from psycopg2 import Error
 import os
 import logging
 from typing import Optional
+from dotenv import load_dotenv
+
+# Load environment variables from .env file if it exists
+load_dotenv()
 
 # Configure logging
 logging.basicConfig(
@@ -19,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 def start_tcp_server(host: str = "localhost", port: int = 443) -> Optional[socket.socket]:
     """
-    Create and start a TCP listening socket on the specified host and port.
+    Create and start a TCP listening socket on the specified host and port with TLS encryption.
     
     Parameters:
     - host (str): The host address to bind the server to. Defaults to env var SERVER_HOST or "localhost".
@@ -28,6 +32,8 @@ def start_tcp_server(host: str = "localhost", port: int = 443) -> Optional[socke
     Returns:
     - server_socket: The socket object if successful, None otherwise.
     """
+    import ssl
+    
     host = host if host != "localhost" else os.getenv("SERVER_HOST", "localhost")
     port = port if port != 443 else int(os.getenv("SERVER_PORT", 443))
     try:
@@ -42,11 +48,19 @@ def start_tcp_server(host: str = "localhost", port: int = 443) -> Optional[socke
         
         # Listen for incoming connections (max 5 queued connections)
         server_socket.listen(5)
-        logger.info(f"TCP server started on {host}:{port}, waiting for connections...")
+        
+        # Wrap the socket with SSL/TLS
+        context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
+        cert_file = os.getenv("SERVER_CERT_FILE", "server.crt")
+        key_file = os.getenv("SERVER_KEY_FILE", "server.key")
+        context.load_cert_chain(certfile=cert_file, keyfile=key_file)
+        server_socket = context.wrap_socket(server_socket, server_side=True)
+        
+        logger.info(f"Secure TLS server started on {host}:{port}, waiting for connections...")
         
         return server_socket
     except Exception as e:
-        logger.error(f"Error starting TCP server on {host}:{port}: {e}")
+        logger.error(f"Error starting secure TLS server on {host}:{port}: {e}")
         return None
 
 def connect_to_postgres(dbname: str = None, user: str = None, password: str = None, host: str = "localhost", port: str = "5432") -> Optional[psycopg2.extensions.connection]:
@@ -66,11 +80,11 @@ def connect_to_postgres(dbname: str = None, user: str = None, password: str = No
     connection = None
     try:
         connection = psycopg2.connect(
-            dbname=dbname or os.getenv("DB_NAME"),
-            user=user or os.getenv("DB_USER"),
-            password=password or os.getenv("DB_PASSWORD"),
-            host=host if host != "localhost" else os.getenv("DB_HOST", "localhost"),
-            port=port if port != "5432" else os.getenv("DB_PORT", "5432")
+            dbname=dbname or os.getenv("TARGET_DB_NAME"),
+            user=user or os.getenv("TARGET_DB_USER"),
+            password=password or os.getenv("TARGET_DB_PASSWORD"),
+            host=host if host != "localhost" else os.getenv("TARGET_DB_HOST", "localhost"),
+            port=port if port != "5432" else os.getenv("TARGET_DB_PORT", "5432")
         )
         logger.info("Successfully connected to the PostgreSQL database.")
         return connection
@@ -241,7 +255,7 @@ if __name__ == "__main__":
                 while True:
                     # Wait for a connection
                     client_socket, client_address = server.accept()
-                    logger.info(f"Connection established with {client_address}")
+                    logger.info(f"Secure connection established with {client_address}")
                     # Handle client data
                     table_name = os.getenv("TABLE_NAME", "your_table_name")
                     while handle_client_data(client_socket, client_address, db_conn, table_name):

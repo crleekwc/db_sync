@@ -5,6 +5,10 @@ from psycopg2 import Error
 import os
 import logging
 from typing import Optional
+from dotenv import load_dotenv
+
+# Load environment variables from .env file if it exists
+load_dotenv()
 
 # Configure logging
 logging.basicConfig(
@@ -19,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 def connect_to_tcp_server(host: str = "localhost", port: int = 443) -> Optional[socket.socket]:
     """
-    Connect to a listening TCP socket on the specified host and port.
+    Connect to a listening TCP socket on the specified host and port with TLS encryption.
     
     Parameters:
     - host (str): The host address of the server to connect to. Defaults to env var SERVER_HOST or "localhost".
@@ -28,18 +32,26 @@ def connect_to_tcp_server(host: str = "localhost", port: int = 443) -> Optional[
     Returns:
     - client_socket: The socket object if connection is successful, None otherwise.
     """
+    import ssl
+    
     host = host if host != "localhost" else os.getenv("SERVER_HOST", "localhost")
     port = port if port != 443 else int(os.getenv("SERVER_PORT", 443))
     try:
         # Create a TCP/IP socket
         client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         
+        # Wrap the socket with SSL/TLS
+        context = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
+        cert_file = os.getenv("SERVER_CERT_FILE", "server.crt")
+        context.load_verify_locations(cert_file)  # Trust the server's self-signed certificate
+        client_socket = context.wrap_socket(client_socket, server_hostname=host)
+        
         # Connect to the server
         client_socket.connect((host, port))
-        logger.info(f"Successfully connected to TCP server at {host}:{port}")
+        logger.info(f"Successfully connected to secure TLS server at {host}:{port}")
         return client_socket
     except Exception as e:
-        logger.error(f"Error connecting to TCP server at {host}:{port}: {e}")
+        logger.error(f"Error connecting to secure TLS server at {host}:{port}: {e}")
         return None
 
 def connect_to_postgres(dbname: str = None, user: str = None, password: str = None, host: str = "localhost", port: str = "5432") -> Optional[psycopg2.extensions.connection]:
@@ -59,11 +71,11 @@ def connect_to_postgres(dbname: str = None, user: str = None, password: str = No
     connection = None
     try:
         connection = psycopg2.connect(
-            dbname=dbname or os.getenv("DB_NAME"),
-            user=user or os.getenv("DB_USER"),
-            password=password or os.getenv("DB_PASSWORD"),
-            host=host if host != "localhost" else os.getenv("DB_HOST", "localhost"),
-            port=port if port != "5432" else os.getenv("DB_PORT", "5432")
+            dbname=dbname or os.getenv("SOURCE_DB_NAME"),
+            user=user or os.getenv("SOURCE_DB_USER"),
+            password=password or os.getenv("SOURCE_DB_PASSWORD"),
+            host=host if host != "localhost" else os.getenv("SOURCE_DB_HOST", "localhost"),
+            port=port if port != "5432" else os.getenv("SOURCE_DB_PORT", "5432")
         )
         logger.info("Successfully connected to the PostgreSQL database.")
         return connection
