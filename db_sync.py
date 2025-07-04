@@ -1,36 +1,50 @@
 import psycopg2
 from psycopg2 import Error
+import os
+import logging
+from typing import Optional
 
-def connect_to_postgres(dbname, user, password, host="localhost", port="5432"):
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler("db_sync.log"),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
+
+def connect_to_postgres(dbname: str = None, user: str = None, password: str = None, host: str = "localhost", port: str = "5432") -> Optional[psycopg2.extensions.connection]:
     """
-    Establish a connection to a PostgreSQL database.
+    Establish a connection to a PostgreSQL database using environment variables as defaults.
     
     Parameters:
-    - dbname (str): The name of the database to connect to.
-    - user (str): The username for the database.
-    - password (str): The password for the database.
-    - host (str): The host address of the database server (default: localhost).
-    - port (str): The port number of the database server (default: 5432).
+    - dbname (str): The name of the database to connect to. Defaults to env var DB_NAME.
+    - user (str): The username for the database. Defaults to env var DB_USER.
+    - password (str): The password for the database. Defaults to env var DB_PASSWORD.
+    - host (str): The host address of the database server. Defaults to env var DB_HOST or "localhost".
+    - port (str): The port number of the database server. Defaults to env var DB_PORT or "5432".
     
     Returns:
-    - connection: A connection object to the PostgreSQL database.
+    - connection: A connection object to the PostgreSQL database, or None if connection fails.
     """
     connection = None
     try:
         connection = psycopg2.connect(
-            dbname=dbname,
-            user=user,
-            password=password,
-            host=host,
-            port=port
+            dbname=dbname or os.getenv("DB_NAME"),
+            user=user or os.getenv("DB_USER"),
+            password=password or os.getenv("DB_PASSWORD"),
+            host=host if host != "localhost" else os.getenv("DB_HOST", "localhost"),
+            port=port if port != "5432" else os.getenv("DB_PORT", "5432")
         )
-        print("Successfully connected to the PostgreSQL database.")
+        logger.info("Successfully connected to the PostgreSQL database.")
         return connection
     except Error as e:
-        print(f"Error connecting to PostgreSQL database: {e}")
+        logger.error(f"Error connecting to PostgreSQL database: {e}")
         return None
 
-def query_table(connection, table_name):
+def query_table(connection: psycopg2.extensions.connection, table_name: str) -> list:
     """
     Query all information from a specified table in the PostgreSQL database.
     
@@ -41,21 +55,22 @@ def query_table(connection, table_name):
     Returns:
     - list: A list of tuples containing the rows of data from the table.
     """
+    cursor = None
     try:
         cursor = connection.cursor()
         query = f"SELECT * FROM {table_name};"
         cursor.execute(query)
         rows = cursor.fetchall()
-        print(f"Successfully retrieved data from table {table_name}.")
+        logger.info(f"Successfully retrieved {len(rows)} rows from table {table_name}.")
         return rows
     except Error as e:
-        print(f"Error querying table {table_name}: {e}")
+        logger.error(f"Error querying table {table_name}: {e}")
         return []
     finally:
         if cursor:
             cursor.close()
 
-def query_new_rows(connection, table_name, column_name="id", last_value=None, timestamp_column=None, time_duration=None):
+def query_new_rows(connection: psycopg2.extensions.connection, table_name: str, column_name: str = "id", last_value: Optional[int] = None, timestamp_column: Optional[str] = None, time_duration: Optional[str] = None) -> tuple[list, Optional[int]]:
     """
     Query newly added or updated rows from a specified table in the PostgreSQL database.
     
@@ -70,10 +85,10 @@ def query_new_rows(connection, table_name, column_name="id", last_value=None, ti
                            to look back for updated rows. Requires timestamp_column to be set.
     
     Returns:
-    - list: A list of tuples containing the new or updated rows of data from the table.
-    - max_value: The maximum value of the column_name from the queried rows, 
-                 to be used as last_value in the next call.
+    - tuple: (list of tuples containing the new or updated rows of data from the table,
+              maximum value of the column_name from the queried rows, to be used as last_value in the next call).
     """
+    cursor = None
     try:
         cursor = connection.cursor()
         conditions = []
@@ -100,18 +115,18 @@ def query_new_rows(connection, table_name, column_name="id", last_value=None, ti
             # Assuming the column_name is in the first position if it's 'id', adjust if needed
             col_index = 0  # Adjust based on table structure if necessary
             max_value = max(row[col_index] for row in rows)
-            print(f"Successfully retrieved {len(rows)} new or updated rows from table {table_name}.")
+            logger.info(f"Successfully retrieved {len(rows)} new or updated rows from table {table_name}.")
         else:
-            print(f"No new or updated rows found in table {table_name}.")
+            logger.info(f"No new or updated rows found in table {table_name}.")
         return rows, max_value
     except Error as e:
-        print(f"Error querying new or updated rows from table {table_name}: {e}")
+        logger.error(f"Error querying new or updated rows from table {table_name}: {e}")
         return [], None
     finally:
         if cursor:
             cursor.close()
 
-def insert_row(connection, table_name, row_data):
+def insert_row(connection: psycopg2.extensions.connection, table_name: str, row_data: dict) -> bool:
     """
     Insert a row of data into a specified table in the PostgreSQL database.
     
@@ -123,6 +138,7 @@ def insert_row(connection, table_name, row_data):
     Returns:
     - bool: True if the insertion was successful, False otherwise.
     """
+    cursor = None
     try:
         cursor = connection.cursor()
         columns = ', '.join(row_data.keys())
@@ -131,10 +147,10 @@ def insert_row(connection, table_name, row_data):
         query = f"INSERT INTO {table_name} ({columns}) VALUES ({placeholders});"
         cursor.execute(query, values)
         connection.commit()
-        print(f"Successfully inserted row into table {table_name}.")
+        logger.info(f"Successfully inserted row into table {table_name}.")
         return True
     except Error as e:
-        print(f"Error inserting row into table {table_name}: {e}")
+        logger.error(f"Error inserting row into table {table_name}: {e}")
         connection.rollback()
         return False
     finally:
@@ -143,49 +159,46 @@ def insert_row(connection, table_name, row_data):
 
 # Example usage
 if __name__ == "__main__":
-    conn = connect_to_postgres(
-        dbname="your_database_name",
-        user="your_username",
-        password="your_password",
-        host="localhost",
-        port="5432"
-    )
+    conn = connect_to_postgres()
     if conn:
-        # Query a table
-        results = query_table(conn, "your_table_name")
-        for row in results:
-            print(row)
-        
-        # Query new rows
-        new_rows, last_id = query_new_rows(conn, "your_table_name", "id", None)
-        for row in new_rows:
-            print(f"New row: {row}")
-        print(f"Last ID queried: {last_id}")
-        
-        # Query new or updated rows within the last hour
-        updated_rows, last_id_updated = query_new_rows(
-            conn, 
-            "your_table_name", 
-            "id", 
-            last_id, 
-            timestamp_column="updated_at", 
-            time_duration="1 hour"
-        )
-        for row in updated_rows:
-            print(f"New or updated row within last hour: {row}")
-        print(f"Last ID queried for updates: {last_id_updated}")
-        
-        # Insert a new row
-        sample_data = {
-            "column1": "value1",
-            "column2": "value2"
-            # Add more columns and values as needed
-        }
-        insert_success = insert_row(conn, "your_table_name", sample_data)
-        if insert_success:
-            print("Row insertion was successful.")
-        else:
-            print("Row insertion failed.")
-        
-        conn.close()
-        print("Connection closed.")
+        try:
+            # Query a table
+            results = query_table(conn, "your_table_name")
+            for row in results:
+                logger.info(f"Row data: {row}")
+            
+            # Query new rows
+            new_rows, last_id = query_new_rows(conn, "your_table_name", "id", None)
+            for row in new_rows:
+                logger.info(f"New row: {row}")
+            logger.info(f"Last ID queried: {last_id}")
+            
+            # Query new or updated rows within the last hour
+            updated_rows, last_id_updated = query_new_rows(
+                conn, 
+                "your_table_name", 
+                "id", 
+                last_id, 
+                timestamp_column="updated_at", 
+                time_duration="1 hour"
+            )
+            for row in updated_rows:
+                logger.info(f"New or updated row within last hour: {row}")
+            logger.info(f"Last ID queried for updates: {last_id_updated}")
+            
+            # Insert a new row
+            sample_data = {
+                "column1": "value1",
+                "column2": "value2"
+                # Add more columns and values as needed
+            }
+            insert_success = insert_row(conn, "your_table_name", sample_data)
+            if insert_success:
+                logger.info("Row insertion was successful.")
+            else:
+                logger.warning("Row insertion failed.")
+        finally:
+            conn.close()
+            logger.info("Connection closed.")
+    else:
+        logger.error("Failed to establish database connection.")
