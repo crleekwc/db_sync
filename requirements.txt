@@ -14,3 +14,4 @@ PyGObject==3.50.1
 setuptools==80.9.0
 six==1.17.0
 wheel==0.46.1
+python-dotenv==1.0.1

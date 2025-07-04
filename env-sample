@@ -1,0 +1,31 @@
+# Source database connection settings
+SOURCE_DB_NAME=
+SOURCE_DB_USER=
+SOURCE_DB_PASSWORD=
+SOURCE_DB_HOST=
+SOURCE_DB_PORT=
+
+# Target database connection settings
+TARGET_DB_NAME=
+TARGET_DB_USER=
+TARGET_DB_PASSWORD=
+TARGET_DB_HOST=
+TARGET_DB_PORT=
+
+# TCP server settings
+SERVER_HOST=
+SERVER_PORT=
+TARGET_SERVER_HOST=
+
+# Table to sync
+TABLE_NAME=
+
+# Socket buffer size
+BUFFER_SIZE=
+
+# Sync interval for client (in seconds)
+SYNC_INTERVAL_SECONDS=
+
+# TLS certificate and key files
+SERVER_CERT_FILE=
+SERVER_KEY_FILE=

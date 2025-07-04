@@ -4,7 +4,7 @@
 
 ## Overview
 
-DB Sync is a Python-based project designed to synchronize data between PostgreSQL databases across different hosts using TCP socket communication. This tool is particularly useful for scenarios where data needs to be extracted from a source database on one host, transferred securely over a network, and inserted into a target database on another host, even in disconnected environments.
+DB Sync is a Python-based project designed to synchronize data between PostgreSQL databases across different hosts using TCP socket communication. This tool is particularly useful for scenarios where data needs to be extracted from a source database on one host, transferred securely over a network, and inserted into a target database on another host, even in disconnected environments. It includes advanced features such as schema application before data insertion and continuous monitoring of the source database for real-time synchronization of new data with persistent tracking between script executions.
 
 ## Features
 
