@@ -55,18 +55,31 @@ DB Sync is a Python-based project designed to synchronize data between PostgreSQ
 
 Configure the following environment variables for database and server settings (you can use a `.env` file with a library like `python-dotenv` or set them directly):
 
-- `DB_NAME`: Database name
-- `DB_USER`: Database username
-- `DB_PASSWORD`: Database password
-- `DB_HOST`: Database host address (source or target)
-- `DB_PORT`: Database port (default: 5432)
-- `SOURCE_DB_HOST`: Source database host for client
-- `TARGET_DB_HOST`: Target database host for server
+**Source Database (Client):**
+- `SOURCE_DB_NAME`: Source database name
+- `SOURCE_DB_USER`: Source database username
+- `SOURCE_DB_PASSWORD`: Source database password
+- `SOURCE_DB_HOST`: Source database host address
+- `SOURCE_DB_PORT`: Source database port (default: 5432)
+
+**Target Database (Server):**
+- `TARGET_DB_NAME`: Target database name
+- `TARGET_DB_USER`: Target database username
+- `TARGET_DB_PASSWORD`: Target database password
+- `TARGET_DB_HOST`: Target database host address
+- `TARGET_DB_PORT`: Target database port (default: 5432)
+
+**Server Settings:**
 - `SERVER_HOST`: TCP server host address
 - `SERVER_PORT`: TCP server port (default: 443)
-- `TARGET_SERVER_HOST`: Target server host for client
+- `TARGET_SERVER_HOST`: Target server host for client connection
+- `SERVER_CERT_FILE`: Path to server SSL certificate file (default: "server.crt")
+- `SERVER_KEY_FILE`: Path to server SSL key file (default: "server.key")
+
+**Other:**
 - `TABLE_NAME`: Database table to sync
 - `BUFFER_SIZE`: Socket buffer size for receiving data (default: 4096)
+- `SYNC_INTERVAL_SECONDS`: Interval in seconds for continuous synchronization (default: 60)
 
 ### Running the Server (on Host B)
 
