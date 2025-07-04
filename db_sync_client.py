@@ -102,49 +102,63 @@ def query_table_schema(connection: psycopg2.extensions.connection, table_name: s
         if cursor:
             cursor.close()
 
-def query_table(connection: psycopg2.extensions.connection, table_name: str) -> dict:
+def query_table(connection: psycopg2.extensions.connection, table_name: str, last_sent_id: int = 0) -> dict:
     """
-    Query all information and schema from a specified table in the PostgreSQL database.
+    Query information and schema from a specified table in the PostgreSQL database.
+    Only retrieves rows with id greater than last_sent_id if provided.
     
     Parameters:
     - connection: A connection object to the PostgreSQL database.
     - table_name (str): The name of the table to query.
+    - last_sent_id (int): The ID of the last sent row to filter new data.
     
     Returns:
-    - dict: A dictionary containing the schema and data rows from the table.
+    - dict: A dictionary containing the schema, data rows, and the new last sent ID from the table.
     """
     cursor = None
     try:
         cursor = connection.cursor()
         # Query data
-        query = f"SELECT * FROM {table_name};"
-        cursor.execute(query)
+        if last_sent_id > 0:
+            query = f"SELECT * FROM {table_name} WHERE id > %s ORDER BY id;"
+            cursor.execute(query, (last_sent_id,))
+        else:
+            query = f"SELECT * FROM {table_name} ORDER BY id;"
+            cursor.execute(query)
         rows = cursor.fetchall()
-        logger.info(f"Successfully retrieved {len(rows)} rows from table {table_name}.")
-        # Query schema
-        schema = query_table_schema(connection, table_name)
-        return {'schema': schema, 'data': rows}
+        new_last_sent_id = last_sent_id
+        if rows:
+            logger.info(f"Successfully retrieved {len(rows)} new rows from table {table_name}.")
+            # Update last sent ID based on the last row
+            new_last_sent_id = rows[-1][0] if rows[-1][0] is not None else last_sent_id
+        else:
+            logger.info(f"No new rows found in table {table_name} since last sync.")
+        # Query schema only if it's the initial sync
+        schema = query_table_schema(connection, table_name) if last_sent_id == 0 else []
+        return {'schema': schema, 'data': rows, 'new_last_sent_id': new_last_sent_id}
     except Error as e:
         logger.error(f"Error querying table {table_name}: {e}")
-        return {'schema': [], 'data': []}
+        return {'schema': [], 'data': [], 'new_last_sent_id': last_sent_id}
     finally:
         if cursor:
             cursor.close()
 
-def send_data_over_socket(client_socket: socket.socket, data: list) -> bool:
+def send_data_over_socket(client_socket: socket.socket, payload: dict) -> bool:
     """
     Send data over the socket connection as a JSON string.
     Ensures all data is sent even if it exceeds buffer size.
     
     Parameters:
     - client_socket: The socket object for the client connection.
-    - data: The data to send (should be serializable to JSON).
+    - payload: The payload containing schema and data to send (should be serializable to JSON).
     
     Returns:
     - bool: True if the data was sent successfully, False otherwise.
     """
     try:
-        message = json.dumps(data)
+        # Prepare payload without new_last_sent_id
+        send_payload = {'schema': payload['schema'], 'data': payload['data']}
+        message = json.dumps(send_payload)
         encoded_message = message.encode('utf-8')
         total_sent = 0
         while total_sent < len(encoded_message):
@@ -160,33 +174,79 @@ def send_data_over_socket(client_socket: socket.socket, data: list) -> bool:
 
 # Example usage
 if __name__ == "__main__":
+    import time
+    import pickle
+    
+    # File to store the last sent ID for persistence
+    LAST_SENT_ID_FILE = "last_sent_id.pkl"
+    
+    def load_last_sent_id():
+        """Load the last sent ID from a file if it exists."""
+        try:
+            if os.path.exists(LAST_SENT_ID_FILE):
+                with open(LAST_SENT_ID_FILE, 'rb') as f:
+                    return pickle.load(f)
+        except Exception as e:
+            logger.error(f"Error loading last sent ID: {e}")
+        return 0
+    
+    def save_last_sent_id(last_sent_id):
+        """Save the last sent ID to a file for persistence."""
+        try:
+            with open(LAST_SENT_ID_FILE, 'wb') as f:
+                pickle.dump(last_sent_id, f)
+        except Exception as e:
+            logger.error(f"Error saving last sent ID: {e}")
+    
+    # Load the last sent ID from previous execution
+    last_sent_id = load_last_sent_id()
+    logger.info(f"Starting sync with last sent ID: {last_sent_id}")
+    
     # Connect to the PostgreSQL database on Host A using environment variables or defaults
     db_conn = connect_to_postgres(host=os.getenv("SOURCE_DB_HOST", "host_a_ip_address"))
     
     if db_conn:
         try:
-            # Query data and schema from the table
             table_name = os.getenv("TABLE_NAME", "your_table_name")
-            table_payload = query_table(db_conn, table_name)
-            db_conn.close()
-            logger.info("Database connection closed.")
+            sync_interval = int(os.getenv("SYNC_INTERVAL_SECONDS", 60))  # Default to 60 seconds
             
-            # Connect to the TCP server on Host B using environment variables or defaults
-            client = connect_to_tcp_server(host=os.getenv("TARGET_SERVER_HOST", "host_b_ip_address"))
-            if client:
+            while True:
                 try:
-                    # Send the queried data and schema over the socket
-                    if send_data_over_socket(client, table_payload):
-                        logger.info("Data sent successfully.")
+                    # Query new data and schema (schema only on initial sync)
+                    table_payload = query_table(db_conn, table_name, last_sent_id)
+                    if table_payload['data'] or table_payload['schema']:  # Send if there is new data or initial schema
+                        # Connect to the TCP server on Host B
+                        client = connect_to_tcp_server(host=os.getenv("TARGET_SERVER_HOST", "host_b_ip_address"))
+                        if client:
+                            try:
+                                if send_data_over_socket(client, table_payload):
+                                    logger.info(f"New data sent successfully. Rows: {len(table_payload['data'])}")
+                                    # Update last sent ID if there was new data
+                                    if table_payload['data']:
+                                        last_sent_id = table_payload['new_last_sent_id']
+                                        save_last_sent_id(last_sent_id)
+                                        logger.info(f"Updated last sent ID to: {last_sent_id}")
+                                else:
+                                    logger.warning("Failed to send data.")
+                                client.close()
+                                logger.info("Socket connection closed.")
+                            except Exception as e:
+                                logger.error(f"Client error: {e}")
+                                client.close()
                     else:
-                        logger.warning("Failed to send data.")
-                    client.close()
-                    logger.info("Socket connection closed.")
+                        logger.info("No new data to sync.")
+                    
+                    # Wait before the next sync
+                    time.sleep(sync_interval)
+                except KeyboardInterrupt:
+                    logger.info("Stopping continuous sync...")
+                    break
                 except Exception as e:
-                    logger.error(f"Client error: {e}")
-                    client.close()
+                    logger.error(f"Sync loop error: {e}")
+                    time.sleep(sync_interval)  # Wait before retrying on error
         except Exception as e:
             logger.error(f"Database operation error: {e}")
+        finally:
             if db_conn:
                 db_conn.close()
                 logger.info("Database connection closed.")
