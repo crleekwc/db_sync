@@ -5,11 +5,11 @@ FROM registry.access.redhat.com/ubi9/ubi:latest
 WORKDIR /db_sync
 
 # Install necessary packages
-RUN dnf install -y python3.12 python3.12-pip git postgresql-devel openssl gcc pkg-config cmake && \
+RUN dnf install -y python3.12 python3.12-pip git postgresql-devel openssl gcc && \
     # Clone the repository
     git clone https://github.com/crleekwc/db_sync.git . && \
     # Install Python dependencies 
-    pip3.12 install --no-cache-dir -r requirements.txt && \
+    python3.12 -m pip install --no-cache-dir -r requirements.txt && \
     # Create directory for certificates
     mkdir -p /db_sync/certs && \
     dnf clean all
